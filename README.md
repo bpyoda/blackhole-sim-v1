@@ -1,4 +1,4 @@
-BLACK HOLE MERGER SIMULATION (Ultimate Spectral Chaos, N-Body Problem, Black Hole Merger)
+BLACK HOLE MERGER SIMULATION ("Ultimate Spectral Chaos": N-Body Problem, Black Hole Merger)
 
 This black hole simulation is a real-time 3D gravitational field simulation written in Python using Taichi. The project focuses on visualizing orbital mechanics by combining an N-body gravity simulation with a fixed pool of massless tracer particles. Every trajectory emerges from the gravitational interactions between the massive bodies.
 
