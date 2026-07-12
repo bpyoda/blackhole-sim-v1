@@ -101,7 +101,7 @@ t_sx  = ti.field(ti.f32, shape=(TRAIL_LEN, MAX_P))
 t_sy  = ti.field(ti.f32, shape=(TRAIL_LEN, MAX_P))
 
 # Rendering / UI settings
-g_dark    = ti.field(ti.i32, shape=())   # 0 = Light  /  1 = Dark
+g_dark    = ti.field(ti.i32, shape=())   # 0 = Light  /  1 = Heavy
 g_quality = ti.field(ti.i32, shape=())   # 0 Low / 1 Med / 2 High
 g_speed   = ti.field(ti.i32, shape=())   # 0 Low / 1 Med / 2 High
 
@@ -630,7 +630,7 @@ def render_dark_bh(gui, i, sx_i, sy_i, r_px, sr_i, bh_pos_i, bh_rad_i,
         sx_ph  = (px_ph/(-pz_ph+1e-6))*fov_f/ASPECT + 0.5
         sy_ph  = (py_ph/(-pz_ph+1e-6))*fov_f + 0.5
         gui.circles(np.stack([sx_ph[v_ph],sy_ph[v_ph]],axis=1).astype(np.float32),
-                    radius=2.2, color=np.uint32(0xFFEEBB))
+                    radius=2.2, color=0xFFEEBB)
 
     # Frame-dragging ergosphere spiral — visible Kerr metric effect (a > 0)
     # Ergosphere: region where no static observer can exist; spacetime dragged
@@ -650,7 +650,7 @@ def render_dark_bh(gui, i, sx_i, sy_i, r_px, sr_i, bh_pos_i, bh_rad_i,
             se_x = (px_e/(-pz_e+1e-6))*fov_f/ASPECT + 0.5
             se_y = (py_e/(-pz_e+1e-6))*fov_f + 0.5
             gui.circles(np.stack([se_x[ve],se_y[ve]],axis=1).astype(np.float32),
-                        radius=1.4, color=np.uint32(0xAA44FF))
+                        radius=1.4, color=0xAA44FF)
 
     # Photon sphere glow (Hawking-like aura / synchrotron corona)
     for layer in range(3 if quality>0 else 1):
@@ -734,7 +734,7 @@ def main():
     print("  Scroll / ↑↓   : Zoom")
     print("  SPACE          : Pause / Resume")
     print("  R              : Reset")
-    print("  M              : Toggle Light / Dark mode")
+    print("  M              : Toggle Light / Heavy mode")
     print("  P              : Toggle Physics Controls panel")
     print("="*70)
 
@@ -951,31 +951,38 @@ def main():
                                 eye_np, xa_np, ya_np, za_np, quality, t_now)
 
         # ── Sidebar ────────────────────────────────────────────────────────
-        gui.rect((0.0,0.0),(SIDEBAR_W,1.0),color=0x05050F)
-        gui.line((SIDEBAR_W,0.0),(SIDEBAR_W,1.0),color=0x1E1E38,radius=1)
-        gui.text("BLACK HOLE",(0.012,0.934),font_size=17,color=0xFFAA00)
-        gui.text("GRAVITY LAB",(0.012,0.906),font_size=12,color=0x7777AA)
+        # Airy, low-cost UI: a few quiet floating surfaces and halo dots rather
+        # than continuous decoration. This leaves Light Mode rendering budget to
+        # the particle trails and geometric rings.
+        gui.rect((0.008,0.014),(SIDEBAR_W-0.010,0.982),color=0x09091B)
+        gui.line((SIDEBAR_W-0.010,0.030),(SIDEBAR_W-0.010,0.966),color=0x2A2448,radius=1)
+        gui.circle((0.024,0.965), color=0x5E3E91, radius=11)
+        gui.circle((0.031,0.958), color=0xD5A5FF, radius=4)
+        gui.text("BLACK HOLE",(0.045,0.944),font_size=17,color=0xE6C7FF)
+        gui.text("GRAVITY LAB",(0.045,0.916),font_size=12,color=0x9B91C2)
 
         dn=int(g_dark[None])
-        gui.rect((0.007,0.73),(SIDEBAR_W-0.007,0.80),color=0x1E1E38 if dn else 0x0A0A1A)
-        gui.text("DARK MODE" if dn else "LIGHT MODE",(0.017,0.747),font_size=14,color=0xFFFFFF)
+        gui.rect((0.018,0.73),(SIDEBAR_W-0.020,0.80),color=0x30224A if dn else 0x15243D)
+        gui.line((0.024,0.733),(SIDEBAR_W-0.026,0.733),color=0x8962BA if dn else 0x67B6D1,radius=1)
+        gui.text("HEAVY MODE" if dn else "LIGHT MODE",(0.031,0.747),font_size=14,color=0xF4ECFF)
 
         gui.text("VISUAL QUALITY",(0.012,0.67),font_size=10,color=0x7777AA)
         qn=int(g_quality[None])
         for qi,(lb,qy) in enumerate([("LOW",0.61),("MEDIUM",0.56),("HIGH",0.51)]):
-            gui.rect((0.007,qy-0.02),(SIDEBAR_W-0.007,qy+0.02),color=0x1E1E38 if qn==qi else 0x080818)
-            gui.text(lb,(0.017,qy-0.008),font_size=13,color=0xFFFFFF if qn==qi else 0x555577)
+            gui.rect((0.018,qy-0.017),(SIDEBAR_W-0.020,qy+0.017),color=0x24213C if qn==qi else 0x101025)
+            gui.text(lb,(0.031,qy-0.008),font_size=13,color=0xF1E9FF if qn==qi else 0x77728E)
 
         gui.text("SIM SPEED",(0.012,0.40),font_size=10,color=0x7777AA)
         sn=int(g_speed[None])
         for si3,(lb,sy_) in enumerate([("LOW",0.33),("MEDIUM",0.27),("HIGH",0.21)]):
-            gui.rect((0.007,sy_-0.02),(SIDEBAR_W-0.007,sy_+0.02),color=0x1E1E38 if sn==si3 else 0x080818)
-            gui.text(lb,(0.017,sy_-0.008),font_size=13,color=0xFFFFFF if sn==si3 else 0x555577)
+            gui.rect((0.018,sy_-0.017),(SIDEBAR_W-0.020,sy_+0.017),color=0x24213C if sn==si3 else 0x101025)
+            gui.text(lb,(0.031,sy_-0.008),font_size=13,color=0xF1E9FF if sn==si3 else 0x77728E)
 
         pp_bc=0x1E3A5A if show_phys else 0x0A0A1A
-        gui.rect((0.007,0.090),(SIDEBAR_W-0.007,0.155),color=pp_bc)
-        gui.text("PHYSICS",(0.017,0.123),font_size=13,color=0xFF9933)
-        gui.text("CONTROLS",(0.017,0.099),font_size=10,color=0xBB7722)
+        gui.rect((0.018,0.090),(SIDEBAR_W-0.020,0.155),color=pp_bc)
+        gui.circle((0.032,0.124),color=0xC98BFF if show_phys else 0x695381,radius=4)
+        gui.text("PHYSICS",(0.043,0.123),font_size=13,color=0xE9C4FF)
+        gui.text("CONTROLS",(0.043,0.099),font_size=10,color=0xAA8CC6)
 
         n_bh_active=int(np.sum(bh_act_np))
         gui.text(f"BH: {n_bh_active}",(0.012,0.058),font_size=12,color=0xFFAA00)
@@ -983,10 +990,11 @@ def main():
 
         # ── Physics panel ──────────────────────────────────────────────────
         if show_phys:
-            gui.rect((PANEL_X0,0.0),(1.0,1.0),color=0x04041A)
-            gui.line((PANEL_X0,0.0),(PANEL_X0,1.0),color=0x1E1E38,radius=1)
-            gui.text("PHYSICS CONTROLS",(PANEL_X0+0.005,0.963),font_size=12,color=0xFF9933)
-            gui.text("Kerr metric  ·  N-body  ·  MHD",(PANEL_X0+0.005,0.946),font_size=8,color=0x6655AA)
+            gui.rect((PANEL_X0+0.006,0.014),(0.994,0.982),color=0x0B0920)
+            gui.line((PANEL_X0+0.006,0.030),(PANEL_X0+0.006,0.966),color=0x45305F,radius=1)
+            gui.circle((PANEL_X0+0.025,0.963),color=0x8A63B9,radius=6)
+            gui.text("PHYSICS CONTROLS",(PANEL_X0+0.040,0.955),font_size=12,color=0xE6C7FF)
+            gui.text("Kerr metric  ·  N-body  ·  MHD",(PANEL_X0+0.040,0.938),font_size=8,color=0x9B82BA)
             for sl in SLIDERS:
                 sl.draw(gui, phys[sl.key])
 
