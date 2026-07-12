@@ -1,5 +1,5 @@
 """
-3D Black Hole Gravity Field Visualizer — Cinematic Edition
+ULTIMATE SPECTRAL CHAOS: N-BODY PROBLEM, BLACK HOLE MERGER
 ==========================================================
 Implements Newtonian N-body gravity enriched with cinematic rendering inspired
 by general relativistic astrophysics (Kerr metric, Schwarzschild geometry,
@@ -690,7 +690,7 @@ def render_dark_bh(gui, i, sx_i, sy_i, r_px, sr_i, bh_pos_i, bh_rad_i,
 def render_light_bh(gui, i, sx_i, sy_i, r_px, bh_pos_i, bh_rad_i,
                     eye_np, xa_np, ya_np, za_np, quality, t_now):
     """
-    Light-mode BH: preserves original dark-mode geometric accretion ring look
+    Light-mode : preserves original dark-mode geometric accretion ring look
     (rotating elliptical rings projected in 3D perspective) augmented with
     subtle spherical shading (Lambertian gradient) and a thin photon ring.
     Light-mode particle trails (rainbow spectral colour) are unchanged.
@@ -750,7 +750,7 @@ def render_light_bh(gui, i, sx_i, sy_i, r_px, bh_pos_i, bh_rad_i,
 
 def main():
     print("="*70)
-    print("   BLACK HOLE GRAVITY FIELD VISUALIZER — Cinematic Edition")
+    print("   ULTIMATE SPECTRAL CHAOS: N-BODY PROBLEM, BLACK HOLE MERGER")
     print("="*70)
     print("  Left Click     : Spawn black hole")
     print("  Right Drag     : Rotate camera")
@@ -762,7 +762,7 @@ def main():
     print("  P              : Toggle Physics Controls panel")
     print("="*70)
 
-    gui = ti.GUI("Black Hole Gravity Lab", res=(W,H), background_color=0x060613)
+    gui = ti.GUI("ULTIMATE SPECTRAL CHAOS: N-BODY PROBLEM, BLACK HOLE MERGER", res=(W,H), background_color=0x060613)
 
     def _geff(): return float(G_BASE * phys["g_mult"])
 
@@ -1022,8 +1022,8 @@ def main():
         gui.line((SIDEBAR_W-0.010,0.030),(SIDEBAR_W-0.010,0.966),color=0x2A2448,radius=1)
         gui.circle((0.024,0.965), color=0x5E3E91, radius=11)
         gui.circle((0.031,0.958), color=0xD5A5FF, radius=4)
-        gui.text("BLACK HOLE",(0.045,0.944),font_size=17,color=0xE6C7FF)
-        gui.text("GRAVITY LAB",(0.045,0.916),font_size=12,color=0x9B91C2)
+        gui.text("ULTIMATE SPECTRAL CHAOS",(0.045,0.944),font_size=17,color=0xE6C7FF)
+        gui.text("N-BODY PROBLEM, BLACK HOLE MERGER",(0.045,0.916),font_size=12,color=0x9B91C2)
 
         dn=int(g_dark[None])
         gui.rect((0.018,0.73),(SIDEBAR_W-0.020,0.80),color=0x30224A if dn else 0x15243D)
@@ -1056,7 +1056,7 @@ def main():
         gui.text("CONTROLS",(0.043,0.099),font_size=10,color=0xAA8CC6)
 
         n_bh_active=int(np.sum(bh_act_np))
-        gui.text(f"BH: {n_bh_active}",(0.012,0.058),font_size=12,color=0xFFAA00)
+        gui.text(f"BLACK HOLE: {n_bh_active}",(0.012,0.058),font_size=12,color=0xFFAA00)
         gui.text(f"FPS: {fps_s:.0f}",(0.012,0.030),font_size=12,color=0x7777AA)
 
         # ── Physics panel ──────────────────────────────────────────────────
