@@ -275,7 +275,7 @@ def init_simulation(g_eff: ti.f32, v_scale: ti.f32):
 
 @ti.kernel
 def update_physics(dt: ti.f32, g_eff: ti.f32, merge_r: ti.f32,
-                   absorb_eff: ti.f32, growth_damp: ti.f32):
+                   absorb_eff: ti.f32, growth_damp: ti.f32, spin: ti.f32):
     """
     Velocity Verlet for BHs (symplectic — conserves phase-space volume):
       x(t+dt) = x + v·dt + ½·a·dt²
@@ -347,6 +347,17 @@ def update_physics(dt: ti.f32, g_eff: ti.f32, merge_r: ti.f32,
                 v_half   = p_vel[i] + 0.5 * p_acc[i] * dt
                 p_pos[i] += v_half * dt
                 a_new    = particle_acc_fn(p_pos[i], g_eff)
+                # Lense-Thirring-inspired frame dragging: a rotating horizon
+                # twists nearby tracer geodesics without destabilising the
+                # underlying leapfrog integration.
+                for j in range(MAX_BH):
+                    if bh_act[j]:
+                        rv = p_pos[i] - bh_pos[j]
+                        r2 = rv.dot(rv) + SOFTEN * SOFTEN
+                        tang = ti.Vector([-rv.y, rv.x, 0.0])
+                        tlen = tang.norm()
+                        if tlen > 1e-6:
+                            a_new += tang / tlen * (spin * g_eff * bh_mass[j] * 1.8 / (r2 * ti.sqrt(r2) + 0.004))
                 p_vel[i] = v_half + 0.5 * a_new * dt
                 p_acc[i] = a_new
                 p_age[i] -= dt
@@ -433,13 +444,15 @@ SF_X   = _srng.uniform(0, 1, SF_N).astype(np.float32)
 SF_Y   = _srng.uniform(0, 1, SF_N).astype(np.float32)
 SF_B   = (_srng.uniform(0,1,SF_N)**3.2*0.72+0.08).astype(np.float32)
 SF_RAD = (_srng.uniform(0,1,SF_N)*1.25+0.35).astype(np.float32)
-_stype = _srng.random(SF_N)
 SF_COL = np.zeros(SF_N, dtype=np.uint32)
 for _k in range(SF_N):
     _b = float(SF_B[_k])
-    if   _stype[_k] > 0.85: SF_COL[_k]=(int(_b*180)<<16)|(int(_b*210)<<8)|int(_b*255)  # O/B blue
-    elif _stype[_k] > 0.60: SF_COL[_k]=(int(_b*255)<<16)|(int(_b*255)<<8)|int(_b*220)  # A/F white
-    else:                    SF_COL[_k]=(int(_b*255)<<16)|(int(_b*190)<<8)|int(_b*140)  # G/K/M warm
+    # Pale cyan, ice blue, azure and white-blue only — a coherent cold cosmos.
+    tint = _srng.uniform(0.0, 1.0)
+    if tint > 0.82:   rr,gg,bb = 0.90, 0.97, 1.00
+    elif tint > 0.48: rr,gg,bb = 0.48, 0.78, 1.00
+    else:             rr,gg,bb = 0.24, 0.56, 1.00
+    SF_COL[_k]=(int(_b*rr*255)<<16)|(int(_b*gg*255)<<8)|int(_b*bb*255)
 
 # ─── Accretion disc pre-computation ────────────────────────────────────────────
 # These arrays define the structural "DNA" of the Keplerian disc.
@@ -539,11 +552,40 @@ def apply_lensing_np(sx, sy, bh_xs, bh_ys, bh_rs, strength):
         d    = np.sqrt(dx*dx + dy*dy) + 1e-8
         # Lensing radius in [0,1]-space: sr / ASPECT
         lens_r = br / ASPECT
-        defl = strength * (lens_r * lens_r * 2.0) / (d + 1e-6)
+        # Exaggerated but smooth Einstein deflection for an immediately legible
+        # lensing field: close stars stretch into arcs rather than merely shift.
+        defl = strength * (lens_r * lens_r * 11.5) / (d + lens_r*0.18 + 1e-6)
         mask = d > lens_r * 0.6
         ox   = np.where(mask, bx + (dx/d)*(d+defl), ox)
         oy   = np.where(mask, by + (dy/d)*(d+defl), oy)
     return ox.astype(np.float32), oy.astype(np.float32)
+
+def tracer_spectrum(age_frac, velocity, acceleration):
+    """Continuous pearl→lavender→electric-blue tracer spectrum.
+
+    Age provides the stable base hue; local velocity and curvature add energy
+    without tying colour to the viewing camera.
+    """
+    palette = np.array([[0.30,0.58,1.00], [0.24,0.92,1.00], [0.56,0.74,1.00],
+                        [0.74,0.55,1.00], [0.90,0.72,1.00], [0.98,0.98,1.00]], dtype=np.float32)
+    u = np.clip(age_frac, 0.0, 0.999) * (len(palette)-1)
+    lo = u.astype(np.int32); hi = np.minimum(lo+1, len(palette)-1)
+    mix = (u-lo)[:, None]
+    base = palette[lo]*(1.0-mix) + palette[hi]*mix
+    energy = np.clip(np.linalg.norm(velocity, axis=1)*9.0 + np.linalg.norm(acceleration, axis=1)*80.0, 0.0, 1.0)
+    colour = np.clip(base*(0.56+0.44*energy[:,None]) + energy[:,None]*0.14, 0.0, 1.0)
+    return ((colour[:,0]*255).astype(np.int32)<<16) | ((colour[:,1]*255).astype(np.int32)<<8) | (colour[:,2]*255).astype(np.int32)
+
+def render_einstein_rings(gui, sx, sy, radius, spin, t_now):
+    """Layered chromatic photon arcs make lensing readable from every angle."""
+    a = np.linspace(0, 2*np.pi, 150, endpoint=False, dtype=np.float32)
+    for mul, color, phase in ((1.58, 0x79D9FF, 0.0), (1.73, 0xA88CFF, 1.6), (1.91, 0xD8F5FF, 3.2)):
+        wobble = 1.0 + 0.075*np.sin(3*a + phase + t_now*(1.4+spin))
+        rr = radius/H * mul * wobble
+        pts = np.stack([sx + rr*np.cos(a), sy + rr*np.sin(a)*0.62], axis=1).astype(np.float32)
+        # Fragment the rings into arcs; continuous circles feel like UI geometry.
+        keep = np.sin(2*a + phase + t_now*0.8) > -0.22
+        gui.lines(pts[keep], np.roll(pts, -1, axis=0)[keep], radius=1.15, color=color)
 
 # ─── Dark Mode BH rendering (Interstellar-inspired) ───────────────────────────
 
@@ -678,15 +720,18 @@ def render_dark_bh(gui, i, sx_i, sy_i, r_px, sr_i, bh_pos_i, bh_rad_i,
             gui.circles(np.stack([se_x[ve],se_y[ve]],axis=1).astype(np.float32),
                         radius=1.4, color=0xAA44FF)
 
-    # Photon sphere glow (Hawking-like aura / synchrotron corona)
-    for layer in range(3 if quality>0 else 1):
-        hr  = r_px*(1.5+layer*0.55)
-        ho  = 0.28/(layer+1.0)*bright
-        hcr = int(min(255, 0xFF*ho));  hcb = int(min(255, 0xCC*ho))
-        gui.circle((sx_i,sy_i), color=(hcr<<16)|hcb, radius=hr)
-
-    # Event horizon — pure black silhouette (Schwarzschild / Kerr boundary)
-    gui.circle((sx_i,sy_i), color=0x000000, radius=r_px)
+    # Volumetric vortex core: nested, sheared plasma spirals replace the flat
+    # black/purple disc while retaining a physically dark event-horizon centre.
+    core_n = 260 if quality > 0 else 120
+    ca = np.linspace(0, np.pi*7.5, core_n, dtype=np.float32)
+    for scale, col, phase in ((1.18, 0x5CD8FF, 0.0), (0.96, 0xB78BFF, 1.8), (0.76, 0xF2F7FF, 3.4)):
+        cr = r_px/H * scale * (1.0 - 0.60*ca/(np.pi*7.5))
+        ca_now = ca + t_now*(4.5 + spin*5.5) + phase
+        cp = np.stack([sx_i + cr*np.cos(ca_now), sy_i + cr*np.sin(ca_now)*0.70], axis=1).astype(np.float32)
+        gui.lines(cp[:-1], cp[1:], radius=1.25, color=col)
+    render_einstein_rings(gui, sx_i, sy_i, r_px, spin, t_now)
+    for layer, col in enumerate((0x12345D, 0x091C3A, 0x030A1A)):
+        gui.circle((sx_i,sy_i), color=col, radius=r_px*(0.92-layer*0.15))
 
 # ─── Light Mode BH rendering (inherited dark-mode rings + 3D sphere depth) ────
 
@@ -748,6 +793,28 @@ def render_light_bh(gui, i, sx_i, sy_i, r_px, bh_pos_i, bh_rad_i,
         gui.circle((sx_i,sy_i), color=(hcr<<16)|hcb, radius=hr)
 
     gui.circle((sx_i,sy_i), color=0x000000, radius=r_px)
+
+def draw_science_panel(gui, dust_visible):
+    """Compact top-right scientific readout for tracer-particle interpretation."""
+    x0, x1, y0, y1 = 0.600, 0.795, 0.748, 0.978
+    gui.rect((x0,y0),(x1,y1),color=0x07142B)
+    # Dashed neon frame; cheap and legible in ti.GUI's immediate-mode renderer.
+    for yy in np.arange(y0, y1, 0.020):
+        gui.line((x0,yy),(x0,min(yy+0.011,y1)),color=0x3E8FBE,radius=1)
+        gui.line((x1,yy),(x1,min(yy+0.011,y1)),color=0x3E8FBE,radius=1)
+    gui.text("TRACER  FLOW  ANALYSIS",(x0+0.010,y1-0.025),font_size=10,color=0x91DFFF)
+    gui.text("MASSLESS DUST: ON" if dust_visible else "MASSLESS DUST: OFF",(x0+0.010,y1-0.046),font_size=8,
+             color=0xD9F5FF if dust_visible else 0x8888A2)
+    grad = (0xFF2D45,0xFF821C,0xFFE748,0x5DFF8C,0x49E7FF,0x497CFF)
+    gx0, gw = x0+0.012, (x1-x0-0.024)/6
+    for n, col in enumerate(grad):
+        gui.rect((gx0+n*gw,y1-0.080),(gx0+(n+1)*gw,y1-0.064),color=col)
+    gui.text("100%  MAXIMUM AGE",(gx0,y1-0.099),font_size=7,color=0xFFB3B9)
+    gui.text("0%  NEW PARTICLE",(x1-0.086,y1-0.099),font_size=7,color=0x9CD7FF)
+    lines = ("Event Horizon + Gravitational Curvature", "Relativistic Flow through Spacetime", 
+             "Accretion Dynamics · Frame Dragging", "Tracer Particles map Gravitational Potential")
+    for n, line in enumerate(lines):
+        gui.text(line,(x0+0.010,y1-0.128-n*0.021),font_size=7,color=0xAFC7DD)
 
 # ─── MAIN LOOP ─────────────────────────────────────────────────────────────────
 
@@ -911,7 +978,7 @@ def main():
                 update_physics(sdp, g_eff_v,
                                float(phys["merger_thresh"]),
                                float(phys["absorb_eff"]),
-                               float(phys["growth_damp"]))
+                               float(phys["growth_damp"]), float(phys["spin"]))
 
         project_scene()
 
@@ -924,6 +991,8 @@ def main():
         t_sx_np   = t_sx.to_numpy()
         t_sy_np   = t_sy.to_numpy()
         p_age_np  = p_age.to_numpy()
+        p_vel_np  = p_vel.to_numpy()
+        p_acc_np  = p_acc.to_numpy()
         bh_pos_np = bh_pos.to_numpy()
         bh_rad_np_cache = bh_rad.to_numpy()
         h_idx     = int(trail_head[None])
@@ -955,7 +1024,11 @@ def main():
         gui.clear(0x02091D)
 
         # Starfield — lensed in both modes (lens intensity may differ)
-        sf_x = SF_X.copy();  sf_y = SF_Y.copy()
+        # Mouse parallax gives the distant sky a separate depth plane from the
+        # simulation; lensing is applied after parallax so both effects compose.
+        parallax = np.array([mp[0]-0.5, mp[1]-0.5], dtype=np.float32)
+        sf_x = SF_X + parallax[0]*(0.010 + SF_RAD*0.004)
+        sf_y = SF_Y + parallax[1]*(0.010 + SF_RAD*0.004)
         star_lens = lens_str * (0.8 if dark else 0.5)
         if star_lens > 0 and vis_bh_x:
             sf_x, sf_y = apply_lensing_np(sf_x, sf_y, vis_bh_x, vis_bh_y, vis_bh_r, star_lens)
@@ -966,7 +1039,7 @@ def main():
         if show_particles:
             age_fracs = p_age_np / P_LIFE
             lut_idx   = np.clip((age_fracs*511).astype(np.int32),0,511)
-            colors    = COLOR_LUT[lut_idx]
+            colors    = tracer_spectrum(age_fracs, p_vel_np, p_acc_np)
 
             seg_b=[]; seg_e=[]; seg_c=[]
             for step in range(trail_draw-1):
@@ -1017,6 +1090,12 @@ def main():
                 render_light_bh(gui, i, sx_i, sy_i, r_px, bh_pos_np[i], br_i,
                                 eye_np, xa_np, ya_np, za_np, quality, t_now)
 
+        # Centre title and the scientific legend deliberately float over the
+        # scene, independent of the left settings rail.
+        gui.text("SINGULARITY  OBSERVATORY",(0.365,0.965),font_size=18,color=0x74D9FF)
+        gui.text("REAL-TIME KERR FIELD VISUALIZATION",(0.395,0.940),font_size=9,color=0x9AAFD0)
+        draw_science_panel(gui, show_particles)
+
         # ── Sidebar ────────────────────────────────────────────────────────
         # Airy, low-cost UI: a few quiet floating surfaces and halo dots rather
         # than continuous decoration. This leaves Light Mode rendering budget to
@@ -1036,14 +1115,18 @@ def main():
         gui.text("VISUAL QUALITY",(0.012,0.67),font_size=10,color=0x7777AA)
         qn=int(g_quality[None])
         for qi,(lb,qy) in enumerate([("LOW",0.61),("MEDIUM",0.56),("HIGH",0.51)]):
-            gui.rect((0.018,qy-0.017),(SIDEBAR_W-0.020,qy+0.017),color=0x24213C if qn==qi else 0x101025)
-            gui.text(lb,(0.031,qy-0.008),font_size=13,color=0xF1E9FF if qn==qi else 0x77728E)
+            tint=(0x5A202C,0x5A4820,0x1F563D)[qi]
+            accent=(0xFF7B85,0xFFD76A,0x82F3A5)[qi]
+            gui.rect((0.018,qy-0.017),(SIDEBAR_W-0.020,qy+0.017),color=tint if qn==qi else 0x101025)
+            gui.text(lb,(0.031,qy-0.008),font_size=13,color=accent if qn==qi else 0x77728E)
 
         gui.text("SIM SPEED",(0.012,0.47),font_size=10,color=0x7777AA)
         sn=int(g_speed[None])
         for si3,(lb,sy_) in enumerate([("LOW",0.43),("MEDIUM",0.38),("HIGH",0.33)]):
-            gui.rect((0.018,sy_-0.017),(SIDEBAR_W-0.020,sy_+0.017),color=0x24213C if sn==si3 else 0x101025)
-            gui.text(lb,(0.031,sy_-0.008),font_size=13,color=0xF1E9FF if sn==si3 else 0x77728E)
+            tint=(0x5A202C,0x5A4820,0x1F563D)[si3]
+            accent=(0xFF7B85,0xFFD76A,0x82F3A5)[si3]
+            gui.rect((0.018,sy_-0.017),(SIDEBAR_W-0.020,sy_+0.017),color=tint if sn==si3 else 0x101025)
+            gui.text(lb,(0.031,sy_-0.008),font_size=13,color=accent if sn==si3 else 0x77728E)
 
         dust_color = 0x243D59 if show_particles else 0x17152A
         gui.rect((0.018,0.205),(SIDEBAR_W-0.020,0.265),color=dust_color)
