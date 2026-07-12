@@ -65,6 +65,7 @@ DT_BASE  = 0.018
 DT_LOW   = 0.007
 DT_HIGH  = 0.055
 SUBSTEPS = 2
+ORBIT_SEPARATION = 0.24  # compact binary: visibly fast, still safely outside capture radius
 
 # ─── Taichi fields — GPU-resident simulation state ─────────────────────────────
 bh_act    = ti.field(ti.i32,  shape=MAX_BH)
@@ -246,7 +247,7 @@ def init_simulation(g_eff: ti.f32, v_scale: ti.f32):
 
     # Circular orbit: each BH orbits CoM at distance sep/2
     # v_orb = √(G·M / sep)  — from centripetal force balance: G·M·m/sep² = m·v²/(sep/2)
-    sep   = 0.50
+    sep   = ORBIT_SEPARATION
     half  = sep * 0.5
     v_orb = ti.sqrt(g_eff * BH_M0 / sep) * v_scale
 
@@ -386,14 +387,22 @@ def project_scene():
 # ─── Add BH kernel ─────────────────────────────────────────────────────────────
 
 @ti.kernel
-def kernel_add_bh(idx: ti.i32, wx: ti.f32, wy: ti.f32, wz: ti.f32, g_eff: ti.f32):
+def kernel_add_bh(idx: ti.i32, wx: ti.f32, wy: ti.f32, wz: ti.f32,
+                  vx: ti.f32, vy: ti.f32, vz: ti.f32, g_eff: ti.f32):
     bh_act[idx]    = 1
     bh_pos[idx]    = ti.Vector([wx, wy, wz])
-    bh_vel[idx]    = ti.Vector([0.0, 0.0, 0.0])
+    bh_vel[idx]    = ti.Vector([vx, vy, vz])
     bh_mass[idx]   = BH_M0
     bh_rad[idx]    = BH_R0
     bh_absorb[idx] = 0.0
     bh_acc[idx]    = bh_grav_acc(ti.Vector([wx, wy, wz]), idx, g_eff)
+
+@ti.kernel
+def refresh_bh_accelerations(g_eff: ti.f32):
+    """Refresh every BH after a user spawn changes the gravitational field."""
+    for i in range(MAX_BH):
+        if bh_act[i]:
+            bh_acc[i] = bh_grav_acc(bh_pos[i], i, g_eff)
 
 # ─── Pre-baked assets ──────────────────────────────────────────────────────────
 
@@ -744,6 +753,42 @@ def main():
 
     init_simulation(float(_geff()), float(phys["orbital_vel"]))
 
+    def _launch_orbiting_bh(idx, wx, wy, wz, g_eff_v):
+        """Place a user BH on a tangential, prograde orbit around the live system.
+
+        A stationary spawn falls straight in and makes the scene feel inert.  The
+        local circular-speed estimate instead gives each added BH angular motion
+        immediately, while the real N-body solver remains responsible for its
+        later slingshots, inspiral, and merger.
+        """
+        active = bh_act.to_numpy().astype(bool)
+        masses = bh_mass.to_numpy()
+        positions = bh_pos.to_numpy()
+        if np.any(active):
+            total_m = float(np.sum(masses[active]))
+            center = np.sum(positions[active] * masses[active, None], axis=0) / max(total_m, 1e-6)
+            com_vel = np.mean(bh_vel.to_numpy()[active], axis=0)
+        else:
+            total_m, center, com_vel = BH_M0, np.zeros(3, dtype=np.float32), np.zeros(3, dtype=np.float32)
+
+        radial = np.array([wx-center[0], wy-center[1]], dtype=np.float32)
+        radius = float(np.linalg.norm(radial))
+        if radius < 0.055:
+            # A click at the centre still receives a deterministic orbit plane.
+            radial = np.array([0.055, 0.0], dtype=np.float32)
+            radius = 0.055
+            wx = float(center[0] + radial[0]); wy = float(center[1])
+        tangent = np.array([-radial[1], radial[0]], dtype=np.float32) / radius
+        # Slightly sub-circular: companions spiral and merge theatrically rather
+        # than escaping the compact default binary.
+        speed = math.sqrt(g_eff_v * total_m / max(radius, 0.055)) * 0.88 * float(phys["orbital_vel"])
+        direction = 1.0 if (idx % 2 == 0) else -1.0
+        vx = float(com_vel[0] + tangent[0] * speed * direction)
+        vy = float(com_vel[1] + tangent[1] * speed * direction)
+        vz = float(com_vel[2] - (wz-center[2]) * speed * 0.22 / max(radius, 0.055))
+        kernel_add_bh(idx, float(wx), float(wy), float(wz), vx, vy, vz, g_eff_v)
+        refresh_bh_accelerations(g_eff_v)
+
     paused       = False
     show_phys    = False
     prev_rmb     = False
@@ -831,7 +876,7 @@ def main():
             act_np=bh_act.to_numpy()
             free=np.argwhere(act_np==0).flatten()
             if len(free)>0:
-                kernel_add_bh(int(free[0]),float(x_w*d),float(y_w*d),float(z_w*d),g_eff_v)
+                _launch_orbiting_bh(int(free[0]), float(x_w*d), float(y_w*d), float(z_w*d), g_eff_v)
                 bh_rad_np_cache=bh_rad.to_numpy()
             click_lock=True
         if not lmb:
